@@ -67,29 +67,67 @@
 
     let currentFileName = null;
 
+    // ---------- logging ----------
     function log(msg, isError = false) {
       logDiv.style.color = isError ? "#ff6b6b" : "#ccc";
       logDiv.textContent = msg;
     }
 
+    // ---------- header normalisation & detection ----------
     function normHeader(name) {
-      return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (!name) return "";
+      return name
+        .toString()
+        .toLowerCase()
+        .replace(/\uFEFF/g, "")          // strip BOM if present
+        .replace(/[^a-z0-9]+/g, " ")     // non-alnum -> space
+        .trim();
+    }
+
+    function squeeze(str) {
+      // remove spaces to help match "dipdirection" vs "dip direction"
+      return str.replace(/\s+/g, "");
     }
 
     function detectColumn(headers, aliases) {
       const normMap = {};
-      headers.forEach(h => normMap[h] = normHeader(h));
+      const squeezeMap = {};
+
+      headers.forEach(h => {
+        const n = normHeader(h);
+        normMap[h] = n;
+        squeezeMap[h] = squeeze(n);
+      });
+
+      const normAliases = aliases.map(a => a.toLowerCase());
+      const squeezeAliases = normAliases.map(a => squeeze(a));
+
+      // pass 1: direct "includes" match on normalised header
       for (const h of headers) {
         const n = normMap[h];
-        for (const a of aliases) {
-          if (n.includes(a)) return h;
+        for (const a of normAliases) {
+          if (n.includes(a)) {
+            return h;
+          }
         }
       }
+
+      // pass 2: includes match on squeezed (no-space) version
+      for (const h of headers) {
+        const n = squeezeMap[h];
+        for (const a of squeezeAliases) {
+          if (n.includes(a)) {
+            return h;
+          }
+        }
+      }
+
       return null;
     }
 
     function toRad(deg) { return (deg * Math.PI) / 180.0; }
 
+    // ---------- stereonet projection ----------
     function projectPole(trendDeg, plungeDeg, R) {
       // Equal-area, lower-hemisphere
       const t = toRad(trendDeg);
@@ -102,6 +140,7 @@
       };
     }
 
+    // ---------- drawing helpers ----------
     function drawCircle(x, y, r, fill, stroke, lw = 1) {
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -172,7 +211,7 @@
       const outer = s/2;
       const inner = outer/2.5;
       let rot = Math.PI * 1.5;
-      let step = Math.PI / spikes;
+      const step = Math.PI / spikes;
       ctx.beginPath();
       for (let i = 0; i < spikes; i++) {
         let x1 = x + Math.cos(rot) * outer;
@@ -180,8 +219,8 @@
         ctx.lineTo(x1, y1);
         rot += step;
         x1 = x + Math.cos(rot) * inner;
-        y1 = y + Math.sin(rot) * inner;
-        ctx.lineTo(x1, y1);
+        let y2 = y + Math.sin(rot) * inner;
+        ctx.lineTo(x1, y2);
         rot += step;
       }
       ctx.closePath();
@@ -193,6 +232,7 @@
       }
     }
 
+    // ---------- symbol styles ----------
     const symbolStyles = {
       "SR":  { label: "SR", shape: "triDown", size: 9,  fill: "#ff00ff", stroke: "#ff00ff" },
       "SH":  { label: "SH", shape: "square",  size: 8,  fill: "#ff00ff", stroke: "#ff00ff" },
@@ -229,6 +269,7 @@
       }
     }
 
+    // ---------- stereonet grid ----------
     function drawGrid(cx, cy, R) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#111";
@@ -272,6 +313,7 @@
       ctx.fillText("W", cx - R - 14, cy);
     }
 
+    // ---------- plotting ----------
     function plotData(rows, dipDirCol, dipCol, typeCol) {
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
@@ -288,8 +330,8 @@
         if (dip < 0 || dip > 90) continue;
 
         const dipDir = ((dd % 360) + 360) % 360;
-        const trend = dipDir;
-        const plunge = 90 - dip;
+        const trend = dipDir;          // pole trend
+        const plunge = 90 - dip;       // pole plunge
         if (plunge < 0 || plunge > 90) continue;
 
         const { x, y } = projectPole(trend, plunge, R);
@@ -329,6 +371,7 @@
       }
     }
 
+    // ---------- main handlers ----------
     function handleGenerate() {
       const file = fileInput.files[0];
       if (!file) { log("Select a CSV file first.", true); return; }
@@ -341,15 +384,33 @@
         skipEmptyLines: true,
         complete: function(res) {
           const rows = res.data;
-          if (!rows.length) { log("No data rows found.", true); return; }
+          if (!rows.length) {
+            log("No data rows found.", true);
+            return;
+          }
 
           const headers = res.meta.fields || Object.keys(rows[0]);
-          const dipDirCol = detectColumn(headers, ["dip dire", "dip dir", "dipdirection", "dip direction", "dip_direction", "dip azim", "dip_azim", "dip azimuth", "dip_azimuth", "azimuth", "dd"]);
-          const dipCol    = detectColumn(headers, ["dip angle", "dip", "dip_deg", "dip(deg)"]);
-          const typeCol   = detectColumn(headers, ["type", "feature", "struct type", "code"]);
+          // aliases tuned for DIPS-style outputs and common variants
+          const dipDirCol = detectColumn(headers, [
+            "dip dire", "dip dir", "dipdirection", "dip direction",
+            "dip_direction", "dip azim", "dip_azim", "dip azimuth",
+            "dip_azimuth", "azimuth", "dd"
+          ]);
+
+          const dipCol = detectColumn(headers, [
+            "dip angle", "dip", "dip_deg", "dip(deg)"
+          ]);
+
+          const typeCol = detectColumn(headers, [
+            "type", "feature", "struct type", "code", "struct", "structure"
+          ]);
 
           if (!dipDirCol || !dipCol) {
-            log("Could not detect Dip Direction / Dip columns.\nUse headers like 'Dip Direction', 'Dip'.", true);
+            log(
+              "Could not detect Dip Direction / Dip columns.\n" +
+              "Detected headers:\n" + headers.join(" | "),
+              true
+            );
             return;
           }
 
@@ -392,4 +453,3 @@
   </script>
 </body>
 </html>
-
