@@ -344,8 +344,8 @@
           if (!rows.length) { log("No data rows found.", true); return; }
 
           const headers = res.meta.fields || Object.keys(rows[0]);
-          const dipDirCol = detectColumn(headers, ["dip dire", "dip dir", "dip direction", "dip azim", "dip bearing"]);
-          const dipCol    = detectColumn(headers, ["dip angle", "dip"]);
+          const dipDirCol = detectColumn(headers, ["dip dire", "dip dir", "dipdirection", "dip direction", "dip_direction", "dip azim", "dip_azim", "dip azimuth", "dip_azimuth", "azimuth", "dd"]);
+          const dipCol    = detectColumn(headers, ["dip angle", "dip", "dip_deg", "dip(deg)"]);
           const typeCol   = detectColumn(headers, ["type", "feature", "struct type", "code"]);
 
           if (!dipDirCol || !dipCol) {
@@ -392,3 +392,4 @@
   </script>
 </body>
 </html>
+
