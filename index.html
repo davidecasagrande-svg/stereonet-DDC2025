@@ -14,7 +14,12 @@
     }
     h1 {
       font-size: 1.3rem;
-      margin-bottom: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
+    .byline {
+      font-size: 0.75rem;
+      color: #666666;
+      margin: 0 0 8px 0;
     }
     .panel {
       margin-bottom: 1rem;
@@ -51,13 +56,19 @@
     canvas {
       display: block;
     }
+    .footnote {
+      font-size: 0.7rem;
+      color: #777777;
+      margin-top: 4px;
+    }
   </style>
 </head>
 <body>
   <h1>Stereonet Plotter (Dip Direction + Dip → Poles)</h1>
+  <p class="byline">Developed by Davide Casagrande (2025)</p>
 
   <div class="panel">
-    <div>Select CSV exported from DIPS / mapping:</div>
+    <div>Select CSV exported from Clino / FieldMove / DIPS / mapping:</div>
     <input type="file" id="csvFile" accept=".csv" />
     <br />
     <button id="generateBtn" disabled>Generate stereonet</button>
@@ -67,6 +78,9 @@
 
   <div id="canvas-wrap">
     <canvas id="stereonetCanvas" width="800" height="800"></canvas>
+  </div>
+  <div class="footnote">
+    Uses Dip Direction (0–360°) + Dip (0–90°). Type/Code accepts both codes and names (e.g. Joint, Bedding, Fault, Shear).
   </div>
 
   <script>
@@ -78,7 +92,7 @@
     const ctx = canvas.getContext("2d");
 
     let currentFileName = null;
-    const R_FACTOR = 0.8; // slightly smaller net to leave room for legend
+    const R_FACTOR = 0.8; // leave space on right for legend
 
     // ---------- logging ----------
     function log(msg, isError = false) {
@@ -259,25 +273,25 @@
       }
     }
 
-    // ---------- symbol styles ----------
+    // ---------- symbol styles (canonical codes) ----------
     const symbolStyles = {
-      "SR":     { label: "SR",    shape: "triDown", size: 9,  fill: "#ff00ff", stroke: "#ff00ff" },
-      "SH":     { label: "SH",    shape: "square",  size: 8,  fill: "#ff00ff", stroke: "#ff00ff" },
-      "CZ":     { label: "CZ",    shape: "triDown", size: 8,  fill: "#ff9900", stroke: "#ff9900" },
-      "FZ":     { label: "FZ",    shape: "square",  size: 8,  fill: "#ffcc66", stroke: "#ffcc66" },
-      "FLH":    { label: "FLH",   shape: "triDown", size: 9,  fill: null,      stroke: "#ff0000", lw: 1.5 },
-      "BG":     { label: "BG",    shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
-      "BP":     { label: "BP",    shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
-      "BF":     { label: "BF",    shape: "square",  size: 7,  fill: null,      stroke: "#00cc66", lw: 1.4 },
-      "CN":     { label: "CN",    shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
-      "CO":     { label: "CO",    shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
-      "FO":     { label: "FO",    shape: "triDown", size: 7,  fill: "#006633", stroke: "#006633" },
-      "FL":     { label: "FL",    shape: "triDown", size: 8,  fill: "#ff0000", stroke: "#ff0000" },
-      "VN":     { label: "VN",    shape: "diamond", size: 7,  fill: "#00cccc", stroke: "#00cccc" },
-      "JN":     { label: "JN",    shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "JT":     { label: "JT",    shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "JOINT":  { label: "Joint", shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "_OTHER": { label: "Other", shape: "circle",  size: 5,  fill: "#888888", stroke: "#888888" }
+      "SR":     { label: "Shear zone (SR)",      shape: "triDown", size: 9,  fill: "#ff00ff", stroke: "#ff00ff" },
+      "SH":     { label: "Shear (SH)",           shape: "square",  size: 8,  fill: "#ff00ff", stroke: "#ff00ff" },
+      "CZ":     { label: "Crushed zone (CZ)",    shape: "triDown", size: 8,  fill: "#ff9900", stroke: "#ff9900" },
+      "FZ":     { label: "Fractured zone (FZ)",  shape: "square",  size: 8,  fill: "#ffcc66", stroke: "#ffcc66" },
+      "FLH":    { label: "Healed fault (FLH)",   shape: "triDown", size: 9,  fill: null,      stroke: "#ff0000", lw: 1.5 },
+      "BG":     { label: "Bedding (BG/BP)",      shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
+      "BP":     { label: "Bedding (BP)",         shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
+      "BF":     { label: "Bedding fabric (BF)",  shape: "square",  size: 7,  fill: null,      stroke: "#00cc66", lw: 1.4 },
+      "CN":     { label: "Contact (CN/CO)",      shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
+      "CO":     { label: "Contact (CO)",         shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
+      "FO":     { label: "Foliation (FO)",       shape: "triDown", size: 7,  fill: "#006633", stroke: "#006633" },
+      "FL":     { label: "Fault (FL/FT)",        shape: "triDown", size: 8,  fill: "#ff0000", stroke: "#ff0000" },
+      "VN":     { label: "Vein (VN)",            shape: "diamond", size: 7,  fill: "#00cccc", stroke: "#00cccc" },
+      "JN":     { label: "Joint (JN/JT)",        shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
+      "JT":     { label: "Joint (JT)",           shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
+      "JOINT":  { label: "Joint",                shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
+      "_OTHER": { label: "Other",                shape: "circle",  size: 5,  fill: "#888888", stroke: "#888888" }
     };
 
     function drawSymbol(style, x, y) {
@@ -296,9 +310,82 @@
       }
     }
 
+    // ---------- classify free-text / codes into canonical codes ----------
+    function classifyType(raw) {
+      if (!raw) return "_OTHER";
+      const s = raw.toString().trim().toUpperCase();
+
+      if (!s) return "_OTHER";
+
+      // if already exact code in styles
+      if (symbolStyles[s]) {
+        // Normalise JOINT/CO/FT later; but keep if exists
+        return s;
+      }
+
+      // Bedding logic
+      if (s.includes("BED")) {
+        if (s.includes("FABRIC") || s.includes("FOLIATION")) return "BF";
+        return "BG"; // plain bedding → BG/BP style
+      }
+      if (s.includes("STRAT")) {
+        return "BG";
+      }
+
+      // Joint logic
+      if (s.startsWith("JN") || s.startsWith("JT") || s.includes("JOINT")) {
+        return "JN";
+      }
+
+      // Shear / shear zone
+      if (s.includes("SHEAR ZONE")) return "SR";
+      if (s === "SR") return "SR";
+      if (s.includes("SHEAR")) return "SH";
+
+      // Crushed zone
+      if (s === "CZ" || s.includes("CRUSHED ZONE") || s.includes("CRUSH")) {
+        return "CZ";
+      }
+
+      // Fractured zone
+      if (s === "FZ" || s.includes("FRACTURE ZONE") || s.includes("FRACTURED ZONE")) {
+        return "FZ";
+      }
+
+      // Healed fault
+      if (s === "FLH" || s.includes("HEALED FAULT")) {
+        return "FLH";
+      }
+
+      // Contact
+      if (s === "CN" || s === "CO" || s.includes("CONTACT")) {
+        return "CN";
+      }
+
+      // Vein
+      if (s === "VN" || s.includes("VEIN")) {
+        return "VN";
+      }
+
+      // Foliation
+      if (s === "FO" || s.includes("FOLIATION")) {
+        return "FO";
+      }
+
+      // Fault
+      if (s === "FLH") return "FLH"; // already handled, but harmless
+      if (s === "FL" || s === "FT" || s.includes("FAULT")) {
+        return "FL";
+      }
+
+      // Fallback: if now matches a style key, return it
+      if (symbolStyles[s]) return s;
+
+      return "_OTHER";
+    }
+
     // ---------- stereonet grid ----------
     function drawGrid(cx, cy, R) {
-      // White background for canvas (also used in export)
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -366,14 +453,11 @@
         const px = cx + x;
         const py = cy - y;
 
+        // classify type/code
         let code = "_OTHER";
         if (typeCol) {
-          const raw = String(row[typeCol] || "").trim().toUpperCase();
-          if (symbolStyles[raw]) {
-            code = raw;
-          } else if (raw.startsWith("JN") || raw === "J" || raw.includes("JOINT")) {
-            code = "JN";
-          }
+          const raw = row[typeCol];
+          code = classifyType(raw);
         }
 
         const style = symbolStyles[code] || symbolStyles["_OTHER"];
@@ -381,14 +465,17 @@
         drawSymbol(style, px, py);
       }
 
-      // Legend: only for used codes, outside net top-right
-      const codes = Array.from(usedCodes).filter(c => symbolStyles[c]);
+      // Legend: used codes only, outside net top-right
+      const codes = Array.from(usedCodes)
+        .filter(c => symbolStyles[c] && c !== "_OTHER");
+
       if (codes.length) {
-        const x0 = cx + R + 10;           // just outside circle on right
-        let y0 = cy - R + 10;             // near top of circle
+        const x0 = cx + R + 10;
+        let y0 = cy - R + 10;
         ctx.font = "11px system-ui";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
+
         for (const c of codes) {
           const style = symbolStyles[c];
           drawSymbol(style, x0, y0);
@@ -396,6 +483,16 @@
           ctx.fillText(style.label || c, x0 + 16, y0);
           y0 += 16;
         }
+      }
+
+      // If there were "_OTHER" points, show one entry
+      if (usedCodes.has("_OTHER")) {
+        const style = symbolStyles["_OTHER"];
+        const x0 = cx + R + 10;
+        let y0 = cy - R + 10 + (codes.length * 16);
+        drawSymbol(style, x0, y0);
+        ctx.fillStyle = "#000000";
+        ctx.fillText(style.label, x0 + 16, y0);
       }
     }
 
@@ -454,7 +551,7 @@
           ]);
 
           const typeCol = detectColumn(headers, [
-            "type", "feature", "struct type", "code", "struct", "structure"
+            "type", "feature", "struct type", "code", "struct", "structure", "comment", "notes"
           ]);
 
           if (!dipDirCol || !dipCol) {
@@ -471,7 +568,7 @@
 
           log(
             `OK. DipDir='${dipDirCol}', Dip='${dipCol}'` +
-            (typeCol ? `, Type='${typeCol}'.` : ", Type not found → using 'Other'.")
+            (typeCol ? `, Type='${typeCol}'.` : ", Type/Code not found → using 'Other' where needed.")
           );
         },
         error: function (err) {
@@ -502,7 +599,7 @@
     generateBtn.addEventListener("click", handleGenerate);
     downloadBtn.addEventListener("click", handleDownload);
 
-    // initial empty grid (so they see the net before loading a file)
+    // initial empty grid
     (function initGrid() {
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
