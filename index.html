@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <title>Stereonet Plotter (DipDir + Dip)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -61,14 +60,26 @@
       color: #777777;
       margin-top: 4px;
     }
+    #pngPreview {
+      margin-top: 6px;
+      font-size: 0.7rem;
+      color: #555555;
+    }
+    #pngPreview img {
+      display: block;
+      margin-top: 4px;
+      border: 1px solid #cccccc;
+      max-width: 260px;
+      height: auto;
+    }
   </style>
 </head>
 <body>
-  <h1>Stereonet Plotter (Dip Direction + Dip → Poles)</h1>
-  <p class="byline">Developed by Davide Casagrande (2025)</p>
+  <h1>Stereonet Plotter (Dip Direction + Dip -> Poles)</h1>
+  <p class="byline">Developed by Davide Casagrande</p>
 
   <div class="panel">
-    <div>Select CSV exported from Clino / FieldMove / DIPS / mapping:</div>
+    <div>Select CSV exported from Clino / FieldMove:</div>
     <input type="file" id="csvFile" accept=".csv" />
     <br />
     <button id="generateBtn" disabled>Generate stereonet</button>
@@ -80,32 +91,58 @@
     <canvas id="stereonetCanvas" width="800" height="800"></canvas>
   </div>
   <div class="footnote">
-    Uses Dip Direction (0–360°) + Dip (0–90°). Type/Code accepts both codes and names (e.g. Joint, Bedding, Fault, Shear).
+    Uses Dip Direction (0-360°) + Dip (0-90°). Type/Code accepts both codes and names (e.g. Joint, Bedding, Fault, Shear).
   </div>
+  <div id="pngPreview"></div>
 
   <script>
     const fileInput = document.getElementById("csvFile");
     const generateBtn = document.getElementById("generateBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const logDiv = document.getElementById("log");
+    const pngPreview = document.getElementById("pngPreview");
     const canvas = document.getElementById("stereonetCanvas");
     const ctx = canvas.getContext("2d");
 
     let currentFileName = null;
-    const R_FACTOR = 0.8; // leave space on right for legend
+    const R_FACTOR = 0.78; // leaves space for legend box
 
-    // ---------- logging ----------
     function log(msg, isError = false) {
       logDiv.style.color = isError ? "#c53030" : "#333333";
       logDiv.textContent = msg;
     }
 
-    // ---------- header normalisation & detection ----------
+    // ---------- CSV parser (simple, offline-safe) ----------
+    function parseCsvSimple(text) {
+      text = text.replace(/\uFEFF/g, "").replace(/\r\n?/g, "\n");
+      const lines = text.split("\n").filter(l => l.trim() !== "");
+      if (!lines.length) return { data: [], fields: [] };
+
+      const first = lines[0];
+      const comma = first.split(",").length;
+      const semi = first.split(";").length;
+      const delimiter = semi > comma ? ";" : ",";
+
+      const fields = first.split(delimiter).map(h => h.trim());
+      const data = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(delimiter);
+        if (parts.every(v => v.trim() === "")) continue;
+        const row = {};
+        for (let j = 0; j < fields.length; j++) {
+          row[fields[j]] = (parts[j] ?? "").trim();
+        }
+        data.push(row);
+      }
+
+      return { data, fields };
+    }
+
+    // ---------- header detection ----------
     function normHeader(name) {
       if (!name) return "";
-      return name
-        .toString()
-        .toLowerCase()
+      return name.toString().toLowerCase()
         .replace(/\uFEFF/g, "")
         .replace(/[^a-z0-9]+/g, " ")
         .trim();
@@ -118,7 +155,6 @@
     function detectColumn(headers, aliases) {
       const normMap = {};
       const squeezeMap = {};
-
       headers.forEach(h => {
         const n = normHeader(h);
         normMap[h] = n;
@@ -128,170 +164,97 @@
       const normAliases = aliases.map(a => a.toLowerCase());
       const squeezeAliases = normAliases.map(a => squeeze(a));
 
-      // pass 1: match on normalised header
       for (const h of headers) {
         const n = normMap[h];
         for (const a of normAliases) {
           if (n.includes(a)) return h;
         }
       }
-
-      // pass 2: match on squeezed (no-space) header
       for (const h of headers) {
         const n = squeezeMap[h];
         for (const a of squeezeAliases) {
           if (n.includes(a)) return h;
         }
       }
-
       return null;
     }
 
-    function toRad(deg) {
-      return (deg * Math.PI) / 180.0;
-    }
+    function toRad(deg) { return (deg * Math.PI) / 180.0; }
 
-    // ---------- stereonet projection ----------
+    // ---------- projection ----------
     function projectPole(trendDeg, plungeDeg, R) {
       const t = toRad(trendDeg);
       const p = toRad(plungeDeg);
       const rho = Math.SQRT2 * Math.sin((Math.PI / 2 - p) / 2);
       const r = rho * R;
-      return {
-        x: r * Math.sin(t),
-        y: r * Math.cos(t)
-      };
+      return { x: r * Math.sin(t), y: r * Math.cos(t) };
     }
 
     // ---------- drawing helpers ----------
     function drawCircle(x, y, r, fill, stroke, lw = 1) {
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
     }
 
     function drawSquare(x, y, s, fill, stroke, lw = 1) {
       ctx.beginPath();
-      ctx.rect(x - s / 2, y - s / 2, s, s);
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
+      ctx.rect(x - s/2, y - s/2, s, s);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
     }
 
     function drawTriUp(x, y, s, fill, stroke, lw = 1) {
       ctx.beginPath();
-      ctx.moveTo(x, y - s / 2);
-      ctx.lineTo(x - s / 2, y + s / 2);
-      ctx.lineTo(x + s / 2, y + s / 2);
+      ctx.moveTo(x, y - s/2);
+      ctx.lineTo(x - s/2, y + s/2);
+      ctx.lineTo(x + s/2, y + s/2);
       ctx.closePath();
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
     }
 
     function drawTriDown(x, y, s, fill, stroke, lw = 1) {
       ctx.beginPath();
-      ctx.moveTo(x - s / 2, y - s / 2);
-      ctx.lineTo(x + s / 2, y - s / 2);
-      ctx.lineTo(x, y + s / 2);
+      ctx.moveTo(x - s/2, y - s/2);
+      ctx.lineTo(x + s/2, y - s/2);
+      ctx.lineTo(x, y + s/2);
       ctx.closePath();
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
     }
 
     function drawDiamond(x, y, s, fill, stroke, lw = 1) {
       ctx.beginPath();
-      ctx.moveTo(x, y - s / 2);
-      ctx.lineTo(x + s / 2, y);
-      ctx.lineTo(x, y + s / 2);
-      ctx.lineTo(x - s / 2, y);
+      ctx.moveTo(x, y - s/2);
+      ctx.lineTo(x + s/2, y);
+      ctx.lineTo(x, y + s/2);
+      ctx.lineTo(x - s/2, y);
       ctx.closePath();
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
     }
 
-    function drawStar(x, y, s, fill, stroke, lw = 1) {
-      const spikes = 5;
-      const outer = s / 2;
-      const inner = outer / 2.5;
-      let rot = Math.PI * 1.5;
-      const step = Math.PI / spikes;
-      ctx.beginPath();
-      for (let i = 0; i < spikes; i++) {
-        let x1 = x + Math.cos(rot) * outer;
-        let y1 = y + Math.sin(rot) * outer;
-        ctx.lineTo(x1, y1);
-        rot += step;
-        x1 = x + Math.cos(rot) * inner;
-        let y2 = y + Math.sin(rot) * inner;
-        ctx.lineTo(x1, y2);
-        rot += step;
-      }
-      ctx.closePath();
-      if (fill) {
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-      if (stroke) {
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = lw;
-        ctx.stroke();
-      }
-    }
-
-    // ---------- symbol styles (canonical codes) ----------
+    // ---------- symbol styles ----------
     const symbolStyles = {
-      "SR":     { label: "Shear zone (SR)",      shape: "triDown", size: 9,  fill: "#ff00ff", stroke: "#ff00ff" },
-      "SH":     { label: "Shear (SH)",           shape: "square",  size: 8,  fill: "#ff00ff", stroke: "#ff00ff" },
-      "CZ":     { label: "Crushed zone (CZ)",    shape: "triDown", size: 8,  fill: "#ff9900", stroke: "#ff9900" },
-      "FZ":     { label: "Fractured zone (FZ)",  shape: "square",  size: 8,  fill: "#ffcc66", stroke: "#ffcc66" },
-      "FLH":    { label: "Healed fault (FLH)",   shape: "triDown", size: 9,  fill: null,      stroke: "#ff0000", lw: 1.5 },
-      "BG":     { label: "Bedding (BG/BP)",      shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
-      "BP":     { label: "Bedding (BP)",         shape: "square",  size: 7,  fill: "#00cc66", stroke: "#00cc66" },
-      "BF":     { label: "Bedding fabric (BF)",  shape: "square",  size: 7,  fill: null,      stroke: "#00cc66", lw: 1.4 },
-      "CN":     { label: "Contact (CN/CO)",      shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
-      "CO":     { label: "Contact (CO)",         shape: "square",  size: 7,  fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
-      "FO":     { label: "Foliation (FO)",       shape: "triDown", size: 7,  fill: "#006633", stroke: "#006633" },
-      "FL":     { label: "Fault (FL/FT)",        shape: "triDown", size: 8,  fill: "#ff0000", stroke: "#ff0000" },
-      "VN":     { label: "Vein (VN)",            shape: "diamond", size: 7,  fill: "#00cccc", stroke: "#00cccc" },
-      "JN":     { label: "Joint (JN/JT)",        shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "JT":     { label: "Joint (JT)",           shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "JOINT":  { label: "Joint",                shape: "triUp",   size: 7,  fill: "#0066ff", stroke: "#0066ff" },
-      "_OTHER": { label: "Other",                shape: "circle",  size: 5,  fill: "#888888", stroke: "#888888" }
+      "SR":     { label: "Shear zone (SR)",      shape: "triDown", size: 9, fill: "#ff00ff", stroke: "#ff00ff" },
+      "SH":     { label: "Shear (SH)",           shape: "square",  size: 8, fill: "#ff00ff", stroke: "#ff00ff" },
+      "CZ":     { label: "Crushed zone (CZ)",    shape: "triDown", size: 8, fill: "#ff9900", stroke: "#ff9900" },
+      "FZ":     { label: "Fractured zone (FZ)",  shape: "square",  size: 8, fill: "#ffcc66", stroke: "#ffcc66" },
+      "FLH":    { label: "Healed fault (FLH)",   shape: "triDown", size: 9, fill: null,      stroke: "#ff0000", lw: 1.5 },
+      "BG":     { label: "Bedding (BG/BP)",      shape: "square",  size: 7, fill: "#00cc66", stroke: "#00cc66" },
+      "BP":     { label: "Bedding (BP)",         shape: "square",  size: 7, fill: "#00cc66", stroke: "#00cc66" },
+      "BF":     { label: "Bedding fabric (BF)",  shape: "square",  size: 7, fill: null,      stroke: "#00cc66", lw: 1.4 },
+      "CN":     { label: "Contact (CN/CO)",      shape: "square",  size: 7, fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
+      "CO":     { label: "Contact (CO)",         shape: "square",  size: 7, fill: "#ffdd00", stroke: "#000000", lw: 1.2 },
+      "FO":     { label: "Foliation (FO)",       shape: "triDown", size: 7, fill: "#006633", stroke: "#006633" },
+      "FL":     { label: "Fault (FL/FT)",        shape: "triDown", size: 8, fill: "#ff0000", stroke: "#ff0000" },
+      "VN":     { label: "Vein (VN)",            shape: "diamond", size: 7, fill: "#00cccc", stroke: "#00cccc" },
+      "JN":     { label: "Joint (JN/JT)",        shape: "triUp",   size: 7, fill: "#0066ff", stroke: "#0066ff" },
+      "JT":     { label: "Joint (JT)",           shape: "triUp",   size: 7, fill: "#0066ff", stroke: "#0066ff" },
+      "JOINT":  { label: "Joint",                shape: "triUp",   size: 7, fill: "#0066ff", stroke: "#0066ff" },
+      "_OTHER": { label: "Other",                shape: "circle",  size: 5, fill: "#888888", stroke: "#888888" }
     };
 
     function drawSymbol(style, x, y) {
@@ -300,100 +263,49 @@
       const stroke = style.stroke || null;
       const lw = style.lw || 1;
       switch (style.shape) {
-        case "circle":  drawCircle(x, y, s / 2, fill, stroke, lw); break;
-        case "square":  drawSquare(x, y, s,     fill, stroke, lw); break;
-        case "triUp":   drawTriUp(x, y, s,      fill, stroke, lw); break;
-        case "triDown": drawTriDown(x, y, s,    fill, stroke, lw); break;
-        case "diamond": drawDiamond(x, y, s,    fill, stroke, lw); break;
-        case "star":    drawStar(x, y, s,       fill, stroke, lw); break;
-        default:        drawCircle(x, y, s / 2, fill || "#888888", stroke || "#888888", lw);
+        case "circle":  drawCircle(x, y, s/2, fill, stroke, lw); break;
+        case "square":  drawSquare(x, y, s,   fill, stroke, lw); break;
+        case "triUp":   drawTriUp(x, y, s,    fill, stroke, lw); break;
+        case "triDown": drawTriDown(x, y, s,  fill, stroke, lw); break;
+        case "diamond": drawDiamond(x, y, s,  fill, stroke, lw); break;
+        default:        drawCircle(x, y, s/2, fill || "#888888", stroke || "#888888", lw);
       }
     }
 
-    // ---------- classify free-text / codes into canonical codes ----------
+    // ---------- classify feature types ----------
     function classifyType(raw) {
       if (!raw) return "_OTHER";
       const s = raw.toString().trim().toUpperCase();
-
       if (!s) return "_OTHER";
+      if (symbolStyles[s]) return s;
 
-      // if already exact code in styles
-      if (symbolStyles[s]) {
-        // Normalise JOINT/CO/FT later; but keep if exists
-        return s;
-      }
-
-      // Bedding logic
       if (s.includes("BED")) {
         if (s.includes("FABRIC") || s.includes("FOLIATION")) return "BF";
-        return "BG"; // plain bedding → BG/BP style
-      }
-      if (s.includes("STRAT")) {
         return "BG";
       }
-
-      // Joint logic
-      if (s.startsWith("JN") || s.startsWith("JT") || s.includes("JOINT")) {
-        return "JN";
-      }
-
-      // Shear / shear zone
+      if (s.includes("STRAT")) return "BG";
+      if (s.startsWith("JN") || s.startsWith("JT") || s.includes("JOINT")) return "JN";
       if (s.includes("SHEAR ZONE")) return "SR";
-      if (s === "SR") return "SR";
       if (s.includes("SHEAR")) return "SH";
-
-      // Crushed zone
-      if (s === "CZ" || s.includes("CRUSHED ZONE") || s.includes("CRUSH")) {
-        return "CZ";
-      }
-
-      // Fractured zone
-      if (s === "FZ" || s.includes("FRACTURE ZONE") || s.includes("FRACTURED ZONE")) {
-        return "FZ";
-      }
-
-      // Healed fault
-      if (s === "FLH" || s.includes("HEALED FAULT")) {
-        return "FLH";
-      }
-
-      // Contact
-      if (s === "CN" || s === "CO" || s.includes("CONTACT")) {
-        return "CN";
-      }
-
-      // Vein
-      if (s === "VN" || s.includes("VEIN")) {
-        return "VN";
-      }
-
-      // Foliation
-      if (s === "FO" || s.includes("FOLIATION")) {
-        return "FO";
-      }
-
-      // Fault
-      if (s === "FLH") return "FLH"; // already handled, but harmless
-      if (s === "FL" || s === "FT" || s.includes("FAULT")) {
-        return "FL";
-      }
-
-      // Fallback: if now matches a style key, return it
-      if (symbolStyles[s]) return s;
+      if (s.includes("CRUSH")) return "CZ";
+      if (s.includes("FRACTURE")) return "FZ";
+      if (s.includes("HEALED FAULT")) return "FLH";
+      if (s.includes("CONTACT")) return "CN";
+      if (s.includes("VEIN")) return "VN";
+      if (s.includes("FOLIATION")) return "FO";
+      if (s.includes("FAULT")) return "FL";
 
       return "_OTHER";
     }
 
-    // ---------- stereonet grid ----------
+    // ---------- grid ----------
     function drawGrid(cx, cy, R) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Outer circle
       drawCircle(cx, cy, R, null, "#000000", 1.5);
 
-      // Concentric circles (10° plunge steps)
       ctx.strokeStyle = "#dddddd";
       ctx.lineWidth = 0.6;
       for (let p = 10; p < 90; p += 10) {
@@ -404,7 +316,6 @@
         ctx.stroke();
       }
 
-      // Radial lines each 10°
       for (let az = 0; az < 360; az += 10) {
         const t = toRad(az);
         const x = cx + R * Math.sin(t);
@@ -417,7 +328,6 @@
         ctx.stroke();
       }
 
-      // N/E/S/W
       ctx.fillStyle = "#000000";
       ctx.font = "14px system-ui";
       ctx.textAlign = "center";
@@ -428,6 +338,66 @@
       ctx.fillText("W", cx - R - 14, cy);
     }
 
+    // ---------- legend in white box ----------
+    function drawLegend(cx, cy, R, usedCodes) {
+      const entries = [];
+
+      for (const c of usedCodes) {
+        if (c !== "_OTHER" && symbolStyles[c]) {
+          entries.push({ style: symbolStyles[c] });
+        }
+      }
+      if (usedCodes.has("_OTHER")) {
+        entries.push({ style: symbolStyles["_OTHER"] });
+      }
+      if (!entries.length) return;
+
+      ctx.font = "11px system-ui";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+
+      const lineHeight = 16;
+      const padding = 6;
+      let maxLabelWidth = 0;
+
+      for (const { style } of entries) {
+        const label = style.label || "";
+        const w = ctx.measureText(label).width;
+        if (w > maxLabelWidth) maxLabelWidth = w;
+      }
+
+      const symbolBox = 14;
+      const boxWidth = padding * 2 + symbolBox + 4 + maxLabelWidth;
+      const boxHeight = padding * 2 + entries.length * lineHeight;
+
+      const targetX = cx + R + 10;
+      const maxX = canvas.width - boxWidth - 10;
+      const boxX = Math.min(targetX, maxX);
+
+      const targetY = cy - R + 20;
+      const minY = 10;
+      const maxY = canvas.height - boxHeight - 10;
+      const boxY = Math.max(minY, Math.min(targetY, maxY));
+
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "#cccccc";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(boxX, boxY, boxWidth, boxHeight);
+      ctx.fill();
+      ctx.stroke();
+
+      let y = boxY + padding + lineHeight / 2;
+      for (const { style } of entries) {
+        const cxSym = boxX + padding + symbolBox / 2;
+        const cySym = y;
+        drawSymbol(style, cxSym, cySym);
+        ctx.fillStyle = "#000000";
+        ctx.fillText(style.label || "", boxX + padding + symbolBox + 4, y);
+        y += lineHeight;
+      }
+    }
+
     // ---------- plotting ----------
     function plotData(rows, dipDirCol, dipCol, typeCol) {
       const cx = canvas.width / 2;
@@ -435,75 +405,40 @@
       const R = Math.min(cx, cy) * R_FACTOR;
 
       drawGrid(cx, cy, R);
+      pngPreview.innerHTML = "";
 
-      const usedCodes = new Set();
+      const used = new Set();
 
       for (const row of rows) {
         const dd = parseFloat(row[dipDirCol]);
         const dip = parseFloat(row[dipCol]);
-        if (!isFinite(dd) || !isFinite(dip)) continue;
-        if (dip < 0 || dip > 90) continue;
+        if (!isFinite(dd) || !isFinite(dip) || dip < 0 || dip > 90) continue;
 
         const dipDir = ((dd % 360) + 360) % 360;
-	    	const plunge = 90 - dip;
-		    if (plunge < 0 || plunge > 90) continue;
+        const plunge = 90 - dip;
+        if (plunge < 0 || plunge > 90) continue;
 
-	// Pole trend = Dip Direction - 180 deg (mod 360)
-		const trend = (dipDir + 180) % 360;
+        // Correct: pole trend = DipDir + 180 (mod 360)
+        const trend = (dipDir + 180) % 360;
 
-		const { x, y } = projectPole(trend, plunge, R); // <-- correct
-
+        const { x, y } = projectPole(trend, plunge, R);
         const px = cx + x;
         const py = cy - y;
 
-        // classify type/code
-        let code = "_OTHER";
-        if (typeCol) {
-          const raw = row[typeCol];
-          code = classifyType(raw);
-        }
-
+        const code = typeCol ? classifyType(row[typeCol]) : "_OTHER";
         const style = symbolStyles[code] || symbolStyles["_OTHER"];
-        usedCodes.add(code);
+
         drawSymbol(style, px, py);
+        used.add(code);
       }
 
-      // Legend: used codes only, outside net top-right
-      const codes = Array.from(usedCodes)
-        .filter(c => symbolStyles[c] && c !== "_OTHER");
-
-      if (codes.length) {
-        const x0 = cx + R + 10;
-        let y0 = cy - R + 10;
-        ctx.font = "11px system-ui";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-
-        for (const c of codes) {
-          const style = symbolStyles[c];
-          drawSymbol(style, x0, y0);
-          ctx.fillStyle = "#000000";
-          ctx.fillText(style.label || c, x0 + 16, y0);
-          y0 += 16;
-        }
-      }
-
-      // If there were "_OTHER" points, show one entry
-      if (usedCodes.has("_OTHER")) {
-        const style = symbolStyles["_OTHER"];
-        const x0 = cx + R + 10;
-        let y0 = cy - R + 10 + (codes.length * 16);
-        drawSymbol(style, x0, y0);
-        ctx.fillStyle = "#000000";
-        ctx.fillText(style.label, x0 + 16, y0);
-      }
+      drawLegend(cx, cy, R, used);
     }
 
-    // ---------- PNG export with guaranteed white background ----------
+    // ---------- PNG export ----------
     function getPngDataUrlWithWhiteBackground() {
       const w = canvas.width;
       const h = canvas.height;
-
       const imageData = ctx.getImageData(0, 0, w, h);
 
       const prevComposite = ctx.globalCompositeOperation;
@@ -520,7 +455,6 @@
       return dataUrl;
     }
 
-    // ---------- main handlers ----------
     function handleGenerate() {
       const file = fileInput.files[0];
       if (!file) {
@@ -531,30 +465,32 @@
       currentFileName = file.name.replace(/\.[^.]+$/, "");
       log("Reading CSV...");
 
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: function (res) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const text = e.target.result;
+          const res = parseCsvSimple(text);
           const rows = res.data;
+          const headers = res.fields;
+
           if (!rows.length) {
             log("No data rows found.", true);
             return;
           }
 
-          const headers = res.meta.fields || Object.keys(rows[0]);
-
           const dipDirCol = detectColumn(headers, [
-            "dip dire", "dip dir", "dipdirection", "dip direction",
-            "dip_direction", "dip azim", "dip_azim", "dip azimuth",
-            "dip_azimuth", "azimuth", "dd"
+            "dip dire","dip dir","dipdirection","dip direction",
+            "dip_direction","dip azim","dip_azim","dip azimuth",
+            "dip_azimuth","azimuth","dd"
           ]);
 
           const dipCol = detectColumn(headers, [
-            "dip angle", "dip", "dip_deg", "dip(deg)"
+            "dip angle","dip","dip_deg","dip(deg)"
           ]);
 
           const typeCol = detectColumn(headers, [
-            "type", "feature", "struct type", "code", "struct", "structure", "comment", "notes"
+            "type","feature","struct type","code",
+            "struct","structure","comment","notes"
           ]);
 
           if (!dipDirCol || !dipCol) {
@@ -570,39 +506,57 @@
           downloadBtn.disabled = false;
 
           log(
-            `OK. DipDir='${dipDirCol}', Dip='${dipCol}'` +
-            (typeCol ? `, Type='${typeCol}'.` : ", Type/Code not found → using 'Other' where needed.")
+            "OK. DipDir='" + dipDirCol + "', Dip='" + dipCol + "'" +
+            (typeCol ? ", Type='" + typeCol + "'." : ", Type/Code not found -> using 'Other'.")
           );
-        },
-        error: function (err) {
-          log("Error reading CSV: " + err.message, true);
+        } catch (err) {
+          log("Error parsing file: " + err.message, true);
         }
-      });
+      };
+
+      reader.onerror = function() {
+        log("Error reading file. Try re-saving as UTF-8 CSV.", true);
+      };
+
+      reader.readAsText(file);
     }
 
     function handleDownload() {
-      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
       const base = currentFileName || "stereonet";
-      const fileName = `${base}_stereonet_${stamp}.png`;
+      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15);
+      const fileName = base + "_stereonet_" + stamp + ".png";
+      const dataUrl = getPngDataUrlWithWhiteBackground();
 
-      const a = document.createElement("a");
-      a.href = getPngDataUrlWithWhiteBackground();
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // Inline preview fallback
+      pngPreview.innerHTML =
+        "PNG generated as " + fileName + ".\n" +
+        "If automatic download is blocked, long-press or right-click the image below to save.\n" +
+        "<img src=\"" + dataUrl + "\" alt=\"" + fileName + "\">";
+
+      // Standard browser download
+      try {
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (e) {
+        // ignore; preview covers sandboxed viewers
+      }
     }
 
     fileInput.addEventListener("change", () => {
       generateBtn.disabled = !fileInput.files.length;
       downloadBtn.disabled = true;
+      pngPreview.innerHTML = "";
       log("");
     });
 
     generateBtn.addEventListener("click", handleGenerate);
     downloadBtn.addEventListener("click", handleDownload);
 
-    // initial empty grid
+    // initial blank grid
     (function initGrid() {
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
