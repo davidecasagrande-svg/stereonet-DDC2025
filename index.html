@@ -445,11 +445,14 @@
         if (dip < 0 || dip > 90) continue;
 
         const dipDir = ((dd % 360) + 360) % 360;
-        const trend = dipDir;
-        const plunge = 90 - dip;
-        if (plunge < 0 || plunge > 90) continue;
+	    	const plunge = 90 - dip;
+		    if (plunge < 0 || plunge > 90) continue;
 
-        const { x, y } = projectPole(trend, plunge, R);
+	// Pole trend = Dip Direction - 180 deg (mod 360)
+		const trend = (dipDir + 180) % 360;
+
+		const { x, y } = projectPole(trend, plunge, R); // <-- correct
+
         const px = cx + x;
         const py = cy - y;
 
